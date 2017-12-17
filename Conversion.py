@@ -1,7 +1,11 @@
 from skimage.io import imread, imsave, imshow
-from skimage import img_as_float, img_as_ubyte
-from numpy import dstack, roll, mean, clip
+from skimage import img_as_float, img_as_ubyte, data, exposure
+from skimage.color import rgb2yuv, yuv2rgb
+from skimage.morphology import disk
+from numpy import dstack, roll, mean, clip, histogram, cumsum, where, sort
+from matplotlib.pyplot import hist, show
 from sys import argv
+import argparse
 
 def rolling(img, img_g):
 	max_similar = 0
@@ -47,7 +51,30 @@ def color_correction(img):
 	img_out = clip((img / [rw, rg, rb]), 0 , 255)
 	return img_out.astype('uint8')
 
-def conversion(img):
+def simple_contrast(img):
+	Y = rgb2yuv(img)[:, :, 0]
+#	values, bin_edges, patches = hist(img_as_ubyte(Y).ravel(), bins=range(257))
+#	show()
+	img1 = sort(Y, axis = None)
+	k = round(img1.size * 0.01)
+	xmin, xmax = img1[k], img1[-k]
+	Y1 = Y[:]
+	Y1 = (Y1 - xmin)/ (xmax - xmin)
+	Y1 = clip(Y1, 0, 1)
+#	values, bin_edges, patches = hist(img_as_ubyte(Y1).ravel(), bins=range(257))
+#	show()
+	img_out = dstack((Y1, rgb2yuv(img)[:, :, 1], rgb2yuv(img)[:, :, 2]))
+	img_out = yuv2rgb(img_out)
+	return img_as_ubyte(clip(img_out, 0, 1))
+
+def correct_histogram(img):
+	Y = rgb2yuv(img)[:, :, 0]
+	Y1 = exposure.equalize_hist(Y)
+	img_out = dstack((Y1, rgb2yuv(img)[:, :, 1], rgb2yuv(img)[:, :, 2]))
+	img_out = yuv2rgb(img_out)
+	return img_as_ubyte(clip(img_out, 0, 1))
+
+def conversion(img, contrast):
 	img = img_as_float(img)
 	height, width, frame = get_parameters_of_image(img);
 	g, b, r = get_gbr(img, height, width, frame)
@@ -55,9 +82,21 @@ def conversion(img):
 	r = treatment(r, g)
 	img_out = dstack((r, g, b))
 	img_out = color_correction(img_as_ubyte(img_out))
+	if contrast == 'histogram':
+		img_out = correct_histogram(img_out)
+	if contrast == 'simple':
+		img_out = simple_contrast(img_out)
 	return img_out
-	
-for i in argv[1:]:
+
+def createParser():
+	parser = argparse.ArgumentParser()
+	parser.add_argument('files', nargs='+')
+	parser.add_argument('-c', '--contrast', choices=['histogram', 'simple'])
+	return parser
+
+parser = createParser()
+namespace = parser.parse_args(argv[1:])
+for i in namespace.files:
 	img = imread(i)
-	img_out = conversion(img)
+	img_out = conversion(img, namespace.contrast)
 	imsave('out' + i[1] + '.png', img_out)
